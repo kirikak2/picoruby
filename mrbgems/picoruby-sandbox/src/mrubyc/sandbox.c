@@ -41,7 +41,9 @@ c_sandbox_error(mrbc_vm *vm, mrbc_value *v, int argc)
   if (sandbox_vm->exception.tt == MRBC_TT_NIL) {
     SET_NIL_RETURN();
   } else {
-    SET_RETURN(sandbox_vm->exception);
+    mrbc_value err = sandbox_vm->exception;
+    mrbc_incref(&err);
+    SET_RETURN(err);
   }
 }
 
