@@ -4,6 +4,9 @@
 #define SS() \
   SandboxState *ss = (SandboxState *)v->instance->data
 
+// Global suspend_vm_code that needs to be reset on mrbc_cleanup()
+static uint8_t *g_suspend_vm_code = NULL;
+
 static void
 mrbc_sandbox_free(mrbc_value *self)
 {
@@ -223,12 +226,11 @@ c_sandbox_execute(mrbc_vm *vm, mrbc_value *v, int argc)
 static void
 c_sandbox_new(mrbc_vm *vm, mrbc_value *v, int argc)
 {
-  static uint8_t *suspend_vm_code = NULL;
   mrbc_value sandbox = mrbc_instance_new(vm, v->cls, sizeof(SandboxState));
   SandboxState *ss = (SandboxState *)sandbox.instance->data;
   memset(ss, 0, sizeof(SandboxState));
 
-  if (!suspend_vm_code) {
+  if (!g_suspend_vm_code) {
     ss->cc = mrc_ccontext_new(NULL);
 
     const uint8_t *script = (const uint8_t *)"Task.current.suspend";
@@ -242,19 +244,19 @@ c_sandbox_new(mrbc_vm *vm, mrbc_value *v, int argc)
       mrbc_raise(vm, MRBC_CLASS(RuntimeError), "Dump failed");
       return;
     }
-    suspend_vm_code = ss->vm_code;
+    g_suspend_vm_code = ss->vm_code;
     mrc_irep_free(ss->cc, ss->irep);
     ss->irep = NULL;
     free_ccontext(ss);
     ss->cc = NULL;
   }
-  if (!suspend_vm_code) {
+  if (!g_suspend_vm_code) {
     mrbc_raise(vm, MRBC_CLASS(RuntimeError), "failed to compile suspend_vm_code");
     return;
   }
 
   ss->tcb = mrbc_tcb_new(MAX_REGS_SIZE, MRBC_TASK_DEFAULT_STATE, MRBC_TASK_DEFAULT_PRIORITY);
-  mrbc_create_task(suspend_vm_code, ss->tcb);
+  mrbc_create_task(g_suspend_vm_code, ss->tcb);
   ss->tcb->vm.flag_permanence = 1;
   const char *name;
   if (0 == argc) {
@@ -273,6 +275,7 @@ c_sandbox_terminate(mrbc_vm *vm, mrbc_value *v, int argc)
   mrbc_terminate_task(ss->tcb);
   SET_NIL_RETURN();
 }
+
 
 void
 mrbc_sandbox_init(mrbc_vm *vm)
@@ -294,4 +297,11 @@ mrbc_sandbox_init(mrbc_vm *vm)
   mrbc_define_method(vm, class_Sandbox, "exec_mrb_from_memory", c_sandbox_exec_mrb_from_memory);
   mrbc_define_method(vm, class_Sandbox, "new",     c_sandbox_new);
   mrbc_define_method(vm, class_Sandbox, "terminate", c_sandbox_terminate);
+}
+
+// Called by picoruby_supervisor.c cleanup_vm() to reset global state
+void
+mrbc_sandbox_cleanup(void)
+{
+  g_suspend_vm_code = NULL;
 }
