@@ -34,7 +34,8 @@ picoruby_load_model(const uint8_t *mrb)
     mrbc_vm_close(vm);
     return false;
   }
-  mrbc_raw_free(vm);
+  mrbc_vm_end(vm);
+  mrbc_vm_close(vm);
   return true;
 }
 
