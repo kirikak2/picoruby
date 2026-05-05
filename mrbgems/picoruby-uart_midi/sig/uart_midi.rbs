@@ -1,0 +1,46 @@
+# @sidebar midi
+class UART_MIDI
+  NOT_INITIALIZED: Integer
+  READY: Integer
+  ERROR: Integer
+  DEFAULT_BAUD_RATE: Integer
+
+  CIN_NOTE_OFF: Integer
+  CIN_NOTE_ON: Integer
+  CIN_CONTROL_CHANGE: Integer
+  CIN_PROGRAM_CHANGE: Integer
+  CIN_PITCH_BEND: Integer
+  CIN_SINGLE_BYTE: Integer
+  CIN_SYSEX_START: Integer
+  CIN_SYSEX_END_2: Integer
+  CIN_SYSEX_END_3: Integer
+
+  @tx_pin: Integer
+  @rx_pin: Integer
+  @baud: Integer
+
+  def self.new: (Integer tx_pin, Integer rx_pin, ?Integer baud) -> instance
+  def transport_id: () -> Integer
+  def tx_pin: () -> Integer
+  def rx_pin: () -> Integer
+  def baud: () -> Integer
+  def status: () -> Integer
+  def connected?: () -> bool
+  def device_info: () -> (Hash[Symbol, Integer] | nil)
+  def open_device: () -> (UART_MIDI | nil)
+  def send_packet: (Integer cable, Integer cin, Integer midi1, Integer midi2, Integer midi3) -> Integer
+  def start_input: () -> Integer
+  def stop_input: () -> nil
+  def input_running?: () -> bool
+  def bytes_available: () -> Integer
+  def read_available: () -> nil
+
+  private
+  def _init: (Integer tx_pin, Integer rx_pin, Integer baud) -> Integer
+  def _get_status: () -> Integer
+  def _get_device_info: () -> (Hash[Symbol, Integer] | nil)
+  def _send_packet: (Integer, Integer, Integer, Integer, Integer) -> Integer
+  def _input_start: () -> Integer
+  def _input_stop: () -> nil
+  def _input_is_running: () -> bool
+end
