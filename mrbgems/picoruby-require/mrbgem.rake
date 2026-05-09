@@ -13,7 +13,10 @@ MRuby::Gem::Specification.new('picoruby-require') do |spec|
       spec.add_dependency 'picoruby-posix-io'
     else
       spec.add_dependency 'picoruby-vfs'
-      spec.add_dependency 'picoruby-littlefs'
+      # Skip littlefs if filesystem-fat is in the build (mutually exclusive).
+      unless build.gems.any? { |g| g.name == 'picoruby-filesystem-fat' }
+        spec.add_dependency 'picoruby-littlefs'
+      end
     end
   end
 

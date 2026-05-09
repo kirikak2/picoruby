@@ -8,7 +8,11 @@ require "machine"
 require 'yaml'
 begin
   require 'gpio'
-  require "littlefs"
+  begin
+    require "filesystem-fat"
+  rescue LoadError
+    require "littlefs"
+  end
   require "vfs"
 rescue LoadError
   # ignore. maybe POSIX
@@ -45,10 +49,21 @@ class Shell
     end
   end
 
+  # Resolve filesystem class at runtime: prefer FAT when the gem is built in,
+  # otherwise fall back to Littlefs. mrubyc has no defined?, so probe with
+  # begin/rescue NameError.
+  def self.fs_class
+    begin
+      FAT
+    rescue NameError
+      Littlefs
+    end
+  end
+
   def self.setup_root_volume(device, label: "PicoRuby")
     sleep 1 if device == :sd
     return if VFS.volume_index("/")
-    fat = Littlefs.new(device, label: label)
+    fat = fs_class.new(device, label: label)
     retry_count = 0
     begin
       VFS.mount(fat, "/")
@@ -225,7 +240,7 @@ class Shell
       print "Initializing RTC... "
       ENV['TZ'] = "JST-9"
       Machine.set_hwclock(rtc.current_time.to_i)
-      Littlefs.unixtime_offset = Time.unixtime_offset
+      fs_class.unixtime_offset = Time.unixtime_offset if fs_class.respond_to?(:unixtime_offset=)
       puts "Available (#{Time.now})"
     rescue => e
       puts "Not available"
@@ -236,7 +251,7 @@ class Shell
   def self.setup_sdcard(driver)
     begin
       print "Initializing SD card(#{driver.class})... "
-      sd = Littlefs.new(:sd, label: "SD", driver: driver)
+      sd = fs_class.new(:sd, label: "SD", driver: driver)
       sd_mountpoint = "/sd"
       VFS.mount(sd, sd_mountpoint)
       puts "Available at #{sd_mountpoint}"

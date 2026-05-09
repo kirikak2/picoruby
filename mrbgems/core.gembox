@@ -10,7 +10,13 @@ MRuby::GemBox.new do |conf|
     end
   else
     conf.gem core: "picoruby-vfs"
-    conf.gem core: "picoruby-littlefs"
+    # Pull in littlefs only if filesystem-fat hasn't already been added by
+    # the build_config (used by midori on ESP32, which uses FAT instead).
+    # Inside the gembox block, `self` is the build (via instance_eval), so
+    # gems is the build's gem list, not the GemBox proxy.
+    unless gems.any? { |g| g.name == 'picoruby-filesystem-fat' }
+      conf.gem core: "picoruby-littlefs"
+    end
     conf.gem core: "picoruby-watchdog"
   end
 end
