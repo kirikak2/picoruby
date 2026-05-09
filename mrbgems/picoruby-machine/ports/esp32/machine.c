@@ -89,14 +89,23 @@ stdin_reader_task(void *arg)
   }
 }
 
+// Spinlock for dual-core synchronization between mrbc_run() and mrbc_tick()
+static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+
+// Timer callback - wraps mrbc_tick() with spinlock for thread safety
+// This is required because mrbc_tick() modifies task queues that mrbc_run() also accesses
 static void
 alarm_handler(void *arg)
 {
+  // Acquire spinlock to synchronize with mrbc_run()
+  // This prevents race conditions when both modify task queues
+  portENTER_CRITICAL(&mux);
 #if defined(PICORB_VM_MRUBYC)
   picorb_tick();
 #else
   picorb_tick(mrb_);
 #endif
+  portEXIT_CRITICAL(&mux);
 }
 
 void
@@ -112,6 +121,8 @@ picorb_hal_init(void)
   esp_timer_create_args_t timer_create_args;
   timer_create_args.callback = &alarm_handler;
   timer_create_args.arg = NULL;
+  // Use ESP_TIMER_TASK - the alarm_handler wraps mrbc_tick() with a spinlock
+  // to synchronize with mrbc_run() and prevent race conditions
   timer_create_args.dispatch_method = ESP_TIMER_TASK;
   timer_create_args.name = "mrbc_tick_timer";
 
@@ -137,13 +148,16 @@ picorb_hal_final(mrb_state *mrb)
 void
 picorb_hal_enable_irq(void)
 {
-  portENABLE_INTERRUPTS();
+  // Use portEXIT_CRITICAL for dual-core safe critical section exit
+  portEXIT_CRITICAL(&mux);
 }
 
 void
 picorb_hal_disable_irq(void)
 {
-  portDISABLE_INTERRUPTS();
+  // Use portENTER_CRITICAL for dual-core safe critical section entry
+  // This uses a spinlock to synchronize between cores and disable interrupts
+  portENTER_CRITICAL(&mux);
 }
 
 void
