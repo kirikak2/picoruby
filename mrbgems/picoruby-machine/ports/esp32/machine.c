@@ -75,7 +75,7 @@ stdin_reader_task(void *arg)
   for (;;) {
 #if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
     if (usb_serial_jtag_ll_rxfifo_data_available()) {
-      uint8_t ch;
+      uint8_t ch = 0;
       usb_serial_jtag_ll_read_rxfifo(&ch, 1);
       picorb_hal_stdin_push(ch);
     }
