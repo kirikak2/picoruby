@@ -34,7 +34,12 @@ picoruby_load_model(const uint8_t *mrb)
     mrbc_vm_close(vm);
     return false;
   }
+  /* Release the vm_id bitmap slot and vm memory, but keep top_irep alive:
+   * classes/methods registered by the gem hold pointers into inner ireps
+   * of this top_irep, so freeing it here would dangle them.
+   * (mrbc_vm_close calls mrbc_irep_free(top_irep) when non-NULL.) */
   mrbc_vm_end(vm);
+  vm->top_irep = NULL;
   mrbc_vm_close(vm);
   return true;
 }
