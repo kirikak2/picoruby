@@ -10,6 +10,7 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "../../include/usb_midi_host.h"
 #include "../../../picoruby-midi/include/midi.h"
 
@@ -49,6 +50,19 @@ int USB_MIDI_HOST_init(void)
         g_info_mutex = xSemaphoreCreateMutex();
         if (g_info_mutex == NULL) {
             ESP_LOGE(TAG, "Failed to create mutex");
+            return -1;
+        }
+    }
+
+    /* Lazy-allocate the 1KB ring buffer in internal RAM. Keeping it
+     * inline as a static array enlarged the .bss enough to disturb LCD
+     * init on Tab5 under idf.py monitor; see CLAUDE.md. */
+    if (g_rx_buffer.data == NULL) {
+        g_rx_buffer.data = (volatile uint8_t *)heap_caps_malloc(
+            USB_MIDI_HOST_RX_BUFFER_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (g_rx_buffer.data == NULL) {
+            ESP_LOGE(TAG, "Failed to allocate RX buffer (%d bytes)",
+                     USB_MIDI_HOST_RX_BUFFER_SIZE);
             return -1;
         }
     }

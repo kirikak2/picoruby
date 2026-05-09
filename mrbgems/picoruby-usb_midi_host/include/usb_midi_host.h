@@ -42,10 +42,16 @@ typedef struct {
  */
 #define USB_MIDI_HOST_RX_BUFFER_SIZE 1024
 
+/* SPSC ring buffer. The 1KB payload used to live inline in this struct,
+ * but on ESP32-P4 keeping ~1KB of inline buffer in .bss perturbed the
+ * internal-DRAM .bss layout enough to cause LCD-blank-on-boot under
+ * idf.py monitor (see CLAUDE.md: "static 変数に 数百 byte 以上の inline
+ * buffer を持たせると..."). The data buffer is now heap-allocated at
+ * init time. */
 typedef struct {
     volatile uint32_t head;  /* Written by USB task */
     volatile uint32_t tail;  /* Written by Ruby task */
-    uint8_t data[USB_MIDI_HOST_RX_BUFFER_SIZE];
+    volatile uint8_t *data;
 } usb_midi_host_rx_buffer_t;
 
 /*
