@@ -32,3 +32,18 @@
 [submodule "mrbgems/picoruby-funicular"]
 	path = mrbgems/picoruby-funicular
 	url = https://github.com/picoruby/funicular
+[submodule "mrbgems/picoruby-uart_midi"]
+	path = mrbgems/picoruby-uart_midi
+	url = git@github.com:kirikak2/picoruby-uart_midi.git
+[submodule "mrbgems/picoruby-usb_midi_host"]
+	path = mrbgems/picoruby-usb_midi_host
+	url = git@github.com:kirikak2/picoruby-usb_midi_host.git
+[submodule "mrbgems/picoruby-sam2695"]
+	path = mrbgems/picoruby-sam2695
+	url = git@github.com:kirikak2/picoruby-sam2695.git
+[submodule "mrbgems/picoruby-midi-mml"]
+	path = mrbgems/picoruby-midi-mml
+	url = git@github.com:kirikak2/picoruby-midi-mml.git
+[submodule "mrbgems/picoruby-midi"]
+	path = mrbgems/picoruby-midi
+	url = git@github.com:kirikak2/picoruby-midi.git
