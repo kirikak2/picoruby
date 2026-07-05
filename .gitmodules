@@ -47,3 +47,6 @@
 [submodule "mrbgems/picoruby-midi"]
 	path = mrbgems/picoruby-midi
 	url = git@github.com:kirikak2/picoruby-midi.git
+[submodule "mrbgems/picoruby-usb_midi_device"]
+	path = mrbgems/picoruby-usb_midi_device
+	url = git@github.com:kirikak2/picoruby-usb_midi_device.git
