@@ -3644,6 +3644,23 @@ FRESULT f_mount (
 }
 
 
+/*-----------------------------------------------------------------------*/
+/* Forget all registered volumes without dereferencing them.             */
+/*                                                                       */
+/* The FATFS objects registered in FatFs[] live in the mruby/c heap      */
+/* (allocated by mrbc_instance_new in the picoruby FAT binding). When    */
+/* the VM is torn down (mrbc_cleanup), that heap is wiped but this static */
+/* table still holds the now-dangling pointers. A subsequent f_mount()   */
+/* would do `cfs = FatFs[vol]; cfs->fs_type = 0;` -- writing a zero byte  */
+/* into whatever object now occupies the old address and corrupting the  */
+/* heap. Call this from the VM-cleanup path to drop the stale pointers    */
+/* WITHOUT dereferencing them.                                           */
+void ff_clear_volumes (void)
+{
+	for (int i = 0; i < FF_VOLUMES; i++) FatFs[i] = 0;
+}
+
+
 
 
 /*-----------------------------------------------------------------------*/
