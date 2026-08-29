@@ -50,18 +50,35 @@ c_width(mrbc_vm *vm, mrbc_value *v, int argc)
 }
 
 static void
+c_slot(mrbc_vm *vm, mrbc_value *v, int argc)
+{
+  sdmmc_unit_info_t *unit_info = (sdmmc_unit_info_t *)v->instance->data;
+  SET_INT_RETURN(unit_info->slot);
+}
+
+static void
+c_freq_khz(mrbc_vm *vm, mrbc_value *v, int argc)
+{
+  sdmmc_unit_info_t *unit_info = (sdmmc_unit_info_t *)v->instance->data;
+  SET_INT_RETURN(unit_info->freq_khz);
+}
+
+static void
 c_s_init(mrbc_vm *vm, mrbc_value *v, int argc)
 {
   mrbc_value self = mrbc_instance_new(vm, v->cls, sizeof(sdmmc_unit_info_t));
   sdmmc_unit_info_t *unit_info = (sdmmc_unit_info_t *)self.instance->data;
   memset(unit_info, 0, sizeof(sdmmc_unit_info_t));
-  unit_info->clk_pin = (int8_t)GET_INT_ARG(1);
-  unit_info->cmd_pin = (int8_t)GET_INT_ARG(2);
-  unit_info->d0_pin  = (int8_t)GET_INT_ARG(3);
-  unit_info->d1_pin  = (int8_t)GET_INT_ARG(4);
-  unit_info->d2_pin  = (int8_t)GET_INT_ARG(5);
-  unit_info->d3_pin  = (int8_t)GET_INT_ARG(6);
-  unit_info->width   = (uint8_t)GET_INT_ARG(7);
+  unit_info->clk_pin  = (int8_t)GET_INT_ARG(1);
+  unit_info->cmd_pin  = (int8_t)GET_INT_ARG(2);
+  unit_info->d0_pin   = (int8_t)GET_INT_ARG(3);
+  unit_info->d1_pin   = (int8_t)GET_INT_ARG(4);
+  unit_info->d2_pin   = (int8_t)GET_INT_ARG(5);
+  unit_info->d3_pin   = (int8_t)GET_INT_ARG(6);
+  unit_info->width    = (uint8_t)GET_INT_ARG(7);
+  /* Optional: older callers pass 7 args and get the port's defaults. */
+  unit_info->slot     = (8 <= argc) ? (int8_t)GET_INT_ARG(8) : -1;
+  unit_info->freq_khz = (9 <= argc) ? (int32_t)GET_INT_ARG(9) : -1;
   SET_RETURN(self);
 }
 
@@ -77,4 +94,6 @@ mrbc_sdmmc_init(mrbc_vm *vm)
   mrbc_define_method(vm, mrbc_class_SDMMC, "d2_pin", c_d2_pin);
   mrbc_define_method(vm, mrbc_class_SDMMC, "d3_pin", c_d3_pin);
   mrbc_define_method(vm, mrbc_class_SDMMC, "width", c_width);
+  mrbc_define_method(vm, mrbc_class_SDMMC, "slot", c_slot);
+  mrbc_define_method(vm, mrbc_class_SDMMC, "freq_khz", c_freq_khz);
 }

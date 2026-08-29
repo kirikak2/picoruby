@@ -258,7 +258,10 @@ c_FAT_init_spi(mrbc_vm *vm, mrbc_value v[], int argc)
 void
 c_FAT_init_sdmmc(mrbc_vm *vm, mrbc_value v[], int argc)
 {
-  if (FAT_set_sdmmc_pins(GET_INT_ARG(1), GET_INT_ARG(2), GET_INT_ARG(3)) < 0) {
+  /* slot and freq_khz are optional: -1 asks the port to choose. */
+  int slot     = (4 <= argc) ? GET_INT_ARG(4) : -1;
+  int freq_khz = (5 <= argc) ? GET_INT_ARG(5) : -1;
+  if (FAT_set_sdmmc_pins(GET_INT_ARG(1), GET_INT_ARG(2), GET_INT_ARG(3), slot, freq_khz) < 0) {
     mrbc_raise(vm, MRBC_CLASS(RuntimeError), "Invalid SDMMC pins.");
     return;
   }

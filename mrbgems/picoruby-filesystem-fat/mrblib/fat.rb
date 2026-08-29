@@ -87,7 +87,8 @@ class FAT
     elsif driver.class.to_s == "SDMMC"
       # SDMMC mode SD card
       # @type var driver: SDMMC
-      FAT.init_sdmmc(driver.clk_pin, driver.cmd_pin, driver.d0_pin)
+      FAT.init_sdmmc(driver.clk_pin, driver.cmd_pin, driver.d0_pin,
+                     driver.slot, driver.freq_khz)
       sleep_ms 10
     end
   end

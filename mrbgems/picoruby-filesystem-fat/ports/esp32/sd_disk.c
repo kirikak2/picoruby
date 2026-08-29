@@ -18,6 +18,11 @@
 #include "driver/sdmmc_host.h"
 #include "driver/gpio.h"
 #include "sdmmc_cmd.h"
+#include "soc/soc_caps.h"
+#if __has_include("soc/sdmmc_pins.h")
+/* Targets whose slot 0 has dedicated IOMUX pins (ESP32, ESP32-P4) */
+#include "soc/sdmmc_pins.h"
+#endif
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -59,6 +64,8 @@ static bool sdmmc_initialized = false;
 static int SDMMC_CLK_PIN = -1;
 static int SDMMC_CMD_PIN = -1;
 static int SDMMC_D0_PIN = -1;
+static int SDMMC_SLOT = -1;      /* -1: pick one from the pins */
+static int SDMMC_FREQ_KHZ = -1;  /* <=0: SDMMC_FREQ_DEFAULT */
 
 /*-----------------------------------------------------------------------*/
 /* Configuration Functions                                               */
@@ -91,14 +98,17 @@ FAT_set_spi_unit(const char* name, int sck, int cipo, int copi, int cs)
 }
 
 int
-FAT_set_sdmmc_pins(int clk, int cmd, int d0)
+FAT_set_sdmmc_pins(int clk, int cmd, int d0, int slot, int freq_khz)
 {
   SDMMC_CLK_PIN = clk;
   SDMMC_CMD_PIN = cmd;
   SDMMC_D0_PIN = d0;
+  SDMMC_SLOT = slot;
+  SDMMC_FREQ_KHZ = freq_khz;
 
   sd_mode = SD_MODE_SDMMC;
-  ESP_LOGI(TAG, "SDMMC mode configured: CLK=%d, CMD=%d, D0=%d", clk, cmd, d0);
+  ESP_LOGI(TAG, "SDMMC mode configured: CLK=%d, CMD=%d, D0=%d, slot=%d, freq=%dkHz",
+           clk, cmd, d0, slot, freq_khz);
   return 0;
 }
 
@@ -634,6 +644,28 @@ spi_disk_ioctl(BYTE cmd, void *buff)
 /* SDMMC Mode Implementation                                             */
 /*=======================================================================*/
 
+/*
+ * Which host slot a card is on is a board wiring fact, not something the pin
+ * numbers imply -- except in one direction. Some chips give slot 0 dedicated
+ * IOMUX pins that the GPIO matrix cannot reach (ESP32-P4: CLK 43 / CMD 44 /
+ * D0 39), so a card wired to those pins is reachable through slot 0 and
+ * nothing else. Recognising that triple is what keeps a board that did not
+ * pass an explicit slot from silently failing to enumerate.
+ */
+static int
+sdmmc_slot_from_pins(void)
+{
+#if defined(SDMMC_SLOT0_IOMUX_PIN_NUM_CLK)
+  if (SDMMC_CLK_PIN == SDMMC_SLOT0_IOMUX_PIN_NUM_CLK &&
+      SDMMC_CMD_PIN == SDMMC_SLOT0_IOMUX_PIN_NUM_CMD &&
+      SDMMC_D0_PIN  == SDMMC_SLOT0_IOMUX_PIN_NUM_D0) {
+    ESP_LOGI(TAG, "Pins match slot 0's dedicated IOMUX pins, using slot 0");
+    return SDMMC_HOST_SLOT_0;
+  }
+#endif
+  return SDMMC_HOST_SLOT_1;
+}
+
 static esp_err_t
 sdmmc_init(void)
 {
@@ -646,11 +678,22 @@ sdmmc_init(void)
     return ESP_ERR_INVALID_STATE;
   }
 
-  ESP_LOGI(TAG, "Initializing SDMMC host...");
+  int slot = SDMMC_SLOT;
+  if (slot < 0) {
+    slot = sdmmc_slot_from_pins();
+  }
+  if (slot < 0 || SOC_SDMMC_NUM_SLOTS <= slot) {
+    ESP_LOGE(TAG, "SDMMC slot %d out of range (this chip has %d)",
+             slot, SOC_SDMMC_NUM_SLOTS);
+    return ESP_ERR_INVALID_ARG;
+  }
+
+  ESP_LOGI(TAG, "Initializing SDMMC host on slot %d...", slot);
 
   // Configure SDMMC host
   sdmmc_host_t host = SDMMC_HOST_DEFAULT();
-  host.max_freq_khz = SDMMC_FREQ_DEFAULT;  // 20 MHz
+  host.slot = slot;
+  host.max_freq_khz = (0 < SDMMC_FREQ_KHZ) ? SDMMC_FREQ_KHZ : SDMMC_FREQ_DEFAULT;
   host.flags = SDMMC_HOST_FLAG_1BIT;       // 1-bit mode
 
   // Configure slot with GPIO pins
@@ -679,7 +722,7 @@ sdmmc_init(void)
   }
 
   // Initialize the slot
-  ret = sdmmc_host_init_slot(SDMMC_HOST_SLOT_1, &slot_config);
+  ret = sdmmc_host_init_slot(slot, &slot_config);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "SDMMC slot init failed: %s", esp_err_to_name(ret));
     sdmmc_host_deinit();

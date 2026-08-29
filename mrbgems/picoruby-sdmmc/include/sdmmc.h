@@ -24,6 +24,15 @@ typedef struct sdmmc_unit_info {
   int8_t   d2_pin;
   int8_t   d3_pin;
   uint8_t  width;   // 1 or 4 bit mode
+  /*
+   * Host slot to drive the card from, or -1 to let the port pick one.
+   * A board is wired to one specific slot and the pins alone do not always
+   * say which: on the ESP32-P4 the slot 0 pins are IOMUX-only, so a card on
+   * those pins cannot be reached through slot 1 at all.
+   */
+  int8_t   slot;
+  /* Bus clock ceiling in kHz, or <= 0 for the port's default. */
+  int32_t  freq_khz;
 } sdmmc_unit_info_t;
 
 sdmmc_status_t SDMMC_init(sdmmc_unit_info_t *unit_info);

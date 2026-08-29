@@ -44,7 +44,7 @@ class FAT
   private def _chmod: (Integer mode, String path) -> 0
 
   def self.init_spi: (String unit, Integer sck_pin, Integer cipo_pin, Integer copi_pin, Integer cs_pin) -> 0
-  def self.init_sdmmc: (Integer clk_pin, Integer cmd_pin, Integer d0_pin) -> 0
+  def self.init_sdmmc: (Integer clk_pin, Integer cmd_pin, Integer d0_pin, ?Integer slot, ?Integer freq_khz) -> 0
   def getfree: (String path) -> Integer
 
   private def _mkfs: (String path) -> self

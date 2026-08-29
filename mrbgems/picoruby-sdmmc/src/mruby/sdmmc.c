@@ -64,19 +64,39 @@ mrb_width(mrb_state *mrb, mrb_value self)
 }
 
 static mrb_value
+mrb_slot(mrb_state *mrb, mrb_value self)
+{
+  sdmmc_unit_info_t *unit_info = (sdmmc_unit_info_t *)mrb_data_get_ptr(mrb, self, &mrb_sdmmc_type);
+  return mrb_fixnum_value(unit_info->slot);
+}
+
+static mrb_value
+mrb_freq_khz(mrb_state *mrb, mrb_value self)
+{
+  sdmmc_unit_info_t *unit_info = (sdmmc_unit_info_t *)mrb_data_get_ptr(mrb, self, &mrb_sdmmc_type);
+  return mrb_fixnum_value(unit_info->freq_khz);
+}
+
+static mrb_value
 mrb_s_init(mrb_state *mrb, mrb_value klass)
 {
   mrb_int clk_pin, cmd_pin, d0_pin, d1_pin, d2_pin, d3_pin, width;
-  mrb_get_args(mrb, "iiiiiii", &clk_pin, &cmd_pin, &d0_pin, &d1_pin, &d2_pin, &d3_pin, &width);
+  /* slot and freq_khz are optional; older callers pass 7 args and get the
+   * port's defaults. */
+  mrb_int slot = -1, freq_khz = -1;
+  mrb_get_args(mrb, "iiiiiii|ii", &clk_pin, &cmd_pin, &d0_pin, &d1_pin, &d2_pin, &d3_pin, &width,
+               &slot, &freq_khz);
 
   sdmmc_unit_info_t *unit_info = (sdmmc_unit_info_t *)mrb_malloc(mrb, sizeof(sdmmc_unit_info_t));
-  unit_info->clk_pin = (int8_t)clk_pin;
-  unit_info->cmd_pin = (int8_t)cmd_pin;
-  unit_info->d0_pin  = (int8_t)d0_pin;
-  unit_info->d1_pin  = (int8_t)d1_pin;
-  unit_info->d2_pin  = (int8_t)d2_pin;
-  unit_info->d3_pin  = (int8_t)d3_pin;
-  unit_info->width   = (uint8_t)width;
+  unit_info->clk_pin  = (int8_t)clk_pin;
+  unit_info->cmd_pin  = (int8_t)cmd_pin;
+  unit_info->d0_pin   = (int8_t)d0_pin;
+  unit_info->d1_pin   = (int8_t)d1_pin;
+  unit_info->d2_pin   = (int8_t)d2_pin;
+  unit_info->d3_pin   = (int8_t)d3_pin;
+  unit_info->width    = (uint8_t)width;
+  unit_info->slot     = (int8_t)slot;
+  unit_info->freq_khz = (int32_t)freq_khz;
 
   mrb_value self = mrb_obj_value(Data_Wrap_Struct(mrb, mrb_class_ptr(klass), &mrb_sdmmc_type, unit_info));
 
@@ -90,7 +110,7 @@ mrb_picoruby_sdmmc_gem_init(mrb_state* mrb)
 
   MRB_SET_INSTANCE_TT(class_SDMMC, MRB_TT_CDATA);
 
-  mrb_define_class_method_id(mrb, class_SDMMC, MRB_SYM(_init), mrb_s_init, MRB_ARGS_REQ(7));
+  mrb_define_class_method_id(mrb, class_SDMMC, MRB_SYM(_init), mrb_s_init, MRB_ARGS_REQ(7)|MRB_ARGS_OPT(2));
   mrb_define_method_id(mrb, class_SDMMC, MRB_SYM(clk_pin), mrb_clk_pin, MRB_ARGS_NONE());
   mrb_define_method_id(mrb, class_SDMMC, MRB_SYM(cmd_pin), mrb_cmd_pin, MRB_ARGS_NONE());
   mrb_define_method_id(mrb, class_SDMMC, MRB_SYM(d0_pin), mrb_d0_pin, MRB_ARGS_NONE());
@@ -98,6 +118,8 @@ mrb_picoruby_sdmmc_gem_init(mrb_state* mrb)
   mrb_define_method_id(mrb, class_SDMMC, MRB_SYM(d2_pin), mrb_d2_pin, MRB_ARGS_NONE());
   mrb_define_method_id(mrb, class_SDMMC, MRB_SYM(d3_pin), mrb_d3_pin, MRB_ARGS_NONE());
   mrb_define_method_id(mrb, class_SDMMC, MRB_SYM(width), mrb_width, MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, class_SDMMC, MRB_SYM(slot), mrb_slot, MRB_ARGS_NONE());
+  mrb_define_method_id(mrb, class_SDMMC, MRB_SYM(freq_khz), mrb_freq_khz, MRB_ARGS_NONE());
 }
 
 void

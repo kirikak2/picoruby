@@ -2,6 +2,7 @@
 class SDMMC
   WIDTH_1BIT: 1
   WIDTH_4BIT: 4
+  AUTO: -1
 
   type sdmmc_width_t = 1|4
 
@@ -12,6 +13,8 @@ class SDMMC
   def d2_pin: () -> Integer
   def d3_pin: () -> Integer
   def width: () -> Integer
+  def slot: () -> Integer
+  def freq_khz: () -> Integer
 
   def self.new: (
     clk_pin: Integer,
@@ -20,7 +23,9 @@ class SDMMC
     ?d1_pin: Integer,
     ?d2_pin: Integer,
     ?d3_pin: Integer,
-    ?width: sdmmc_width_t
+    ?width: sdmmc_width_t,
+    ?slot: Integer,
+    ?freq_khz: Integer
   ) -> SDMMC
 
   private def self._init: (
@@ -30,6 +35,8 @@ class SDMMC
     Integer d1_pin,
     Integer d2_pin,
     Integer d3_pin,
-    Integer width
+    Integer width,
+    ?Integer slot,
+    ?Integer freq_khz
   ) -> SDMMC
 end
