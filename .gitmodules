@@ -1,6 +1,7 @@
 [submodule "mrbgems/picoruby-mrubyc/lib/mrubyc"]
 	path = mrbgems/picoruby-mrubyc/lib/mrubyc
-	url = https://github.com/mrubyc/mrubyc
+	url = https://github.com/kirikak2/mrubyc.git
+	branch = selfbuild
 [submodule "mrbgems/picoruby-mruby/lib/mruby"]
 	path = mrbgems/picoruby-mruby/lib/mruby
 	url = https://github.com/mruby/mruby.git
