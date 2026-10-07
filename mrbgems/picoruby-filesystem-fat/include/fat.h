@@ -70,12 +70,12 @@ void mrbc_raise_iff_f_error(mrbc_vm *vm, FRESULT res, const char *func);
 void mrbc_init_class_FAT_File(mrbc_vm *vm, mrbc_class *class_FAT);
 void mrbc_init_class_FAT_Dir(mrbc_vm *vm, mrbc_class *class_FAT);
 
+#endif /* PICORB_VM_MRUBYC */
+
 #ifdef USE_FAT_SD_DISK
 int FAT_set_spi_unit(const char* name, int sck, int cipo, int copi, int cs);
 int FAT_set_sdmmc_pins(int clk, int cmd, int d0, int slot, int freq_khz);
 #endif
-
-#endif /* PICORB_VM_MRUBYC */
 
 #ifdef __cplusplus
 }

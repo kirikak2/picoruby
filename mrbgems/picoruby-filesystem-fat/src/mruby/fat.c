@@ -306,7 +306,7 @@ mrb__contiguous_p(mrb_state *mrb, mrb_value self)
 
 
 #ifdef USE_FAT_SD_DISK
-void
+static mrb_value
 mrb_FAT_init_spi(mrb_state *mrb, mrb_value self)
 {
   const char *unit_name;
@@ -314,7 +314,19 @@ mrb_FAT_init_spi(mrb_state *mrb, mrb_value self)
   mrb_get_args(mrb, "ziiii", &unit_name, &sck, &cipo, &copi, &cs);
   if (FAT_set_spi_unit(unit_name, sck, cipo, copi, cs) < 0) {
     mrb_raise(mrb, E_RUNTIME_ERROR, "Invalid SPI unit.");
-    return;
+  }
+  return mrb_fixnum_value(0);
+}
+
+static mrb_value
+mrb_FAT_init_sdmmc(mrb_state *mrb, mrb_value self)
+{
+  /* slot and freq_khz are optional: -1 asks the port to choose. */
+  mrb_int clk, cmd, d0;
+  mrb_int slot = -1, freq_khz = -1;
+  mrb_get_args(mrb, "iii|ii", &clk, &cmd, &d0, &slot, &freq_khz);
+  if (FAT_set_sdmmc_pins(clk, cmd, d0, slot, freq_khz) < 0) {
+    mrb_raise(mrb, E_RUNTIME_ERROR, "Invalid SDMMC pins.");
   }
   return mrb_fixnum_value(0);
 }
@@ -352,7 +364,8 @@ mrb_picoruby_filesystem_fat_gem_init(mrb_state* mrb)
   mrb_define_method_id(mrb, class_FAT_Stat, MRB_SYM(_stat), mrb__stat, MRB_ARGS_REQ(1));
 
 #ifdef USE_FAT_SD_DISK
-  mrb_define_method_id(mrb, class_FAT, MRB_SYM(init_spi), mrb_FAT_init_spi, MRB_ARGS_REQ(5));
+  mrb_define_class_method_id(mrb, class_FAT, MRB_SYM(init_spi), mrb_FAT_init_spi, MRB_ARGS_REQ(5));
+  mrb_define_class_method_id(mrb, class_FAT, MRB_SYM(init_sdmmc), mrb_FAT_init_sdmmc, MRB_ARGS_ARG(3, 2));
 #endif
 }
 
