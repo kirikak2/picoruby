@@ -103,7 +103,10 @@ alarm_handler(void *arg)
 #if defined(PICORB_VM_MRUBYC)
   picorb_tick();
 #else
-  picorb_tick(mrb_);
+  // No VM between picorb_hal_final() and the next picorb_hal_init()
+  if (mrb_) {
+    picorb_tick(mrb_);
+  }
 #endif
   portEXIT_CRITICAL(&mux);
 }
@@ -116,8 +119,19 @@ picorb_hal_init(void)
 #endif
 {
 #if defined(PICORB_VM_MRUBY)
+  portENTER_CRITICAL(&mux);
   mrb_ = (mrb_state *)mrb;
+  portEXIT_CRITICAL(&mux);
 #endif
+  // Called for every VM a host opens (the supervisor opens one per script),
+  // but the tick timer and the stdin reader are process-wide: set them up
+  // once, otherwise each VM adds another timer and another reader task.
+  static bool initialized = false;
+  if (initialized) {
+    return;
+  }
+  initialized = true;
+
   esp_timer_create_args_t timer_create_args;
   timer_create_args.callback = &alarm_handler;
   timer_create_args.arg = NULL;
@@ -141,7 +155,13 @@ picorb_hal_init(void)
 void
 picorb_hal_final(mrb_state *mrb)
 {
-  (void)mrb;
+  // The timer keeps running for the next VM; just stop it from ticking the
+  // one being closed.
+  portENTER_CRITICAL(&mux);
+  if (mrb_ == mrb || mrb == NULL) {
+    mrb_ = NULL;
+  }
+  portEXIT_CRITICAL(&mux);
 }
 #endif
 
@@ -161,8 +181,15 @@ picorb_hal_disable_irq(void)
 }
 
 void
+#if defined(PICORB_VM_MRUBY)
+picorb_hal_idle_cpu(mrb_state *mrb)
+#else
 picorb_hal_idle_cpu(void)
+#endif
 {
+#if defined(PICORB_VM_MRUBY)
+  (void)mrb;
+#endif
   vTaskDelay(1);
 }
 
