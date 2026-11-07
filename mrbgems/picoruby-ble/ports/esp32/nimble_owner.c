@@ -53,6 +53,10 @@ static bool wrq_drop_logged = false;
 static portMUX_TYPE wrq_mux = portMUX_INITIALIZER_UNLOCKED;
 
 static bool started = false;
+
+/* Clients in the order they first acquired; the BLE class's is legacy_client */
+static picoruby_nimble_client_t *clients = NULL;
+static picoruby_nimble_client_t legacy_client = { .name = "BLE", .exclusive = true };
 static volatile bool synced = false;
 static uint8_t own_addr_type = BLE_OWN_ADDR_PUBLIC;
 static SemaphoreHandle_t sync_sem = NULL;
@@ -239,13 +243,18 @@ on_sync(void)
   }
   synced = true;
   if (sync_sem) xSemaphoreGive(sync_sem);
+  for (picoruby_nimble_client_t *c = clients; c; c = c->next) {
+    if (c->held && c->set_up && c->on_sync) c->on_sync();
+  }
 }
 
 static void
 on_reset(int reason)
 {
-  (void)reason;
   synced = false;
+  for (picoruby_nimble_client_t *c = clients; c; c = c->next) {
+    if (c->held && c->on_reset) c->on_reset(reason);
+  }
 }
 
 static void
@@ -268,11 +277,42 @@ ensure_timers(void)
   }
 }
 
-int
-picoruby_nimble_start(picoruby_nimble_setup_fn setup)
-{
-  if (started) return 0;
+static SemaphoreHandle_t owner_lock = NULL;
+static portMUX_TYPE owner_lock_mux = portMUX_INITIALIZER_UNLOCKED;
 
+static void
+lock_owner(void)
+{
+  if (owner_lock == NULL) {
+    SemaphoreHandle_t m = xSemaphoreCreateRecursiveMutex();
+    taskENTER_CRITICAL(&owner_lock_mux);
+    if (owner_lock == NULL) {
+      owner_lock = m;
+      m = NULL;
+    }
+    taskEXIT_CRITICAL(&owner_lock_mux);
+    if (m) vSemaphoreDelete(m);
+  }
+  xSemaphoreTakeRecursive(owner_lock, portMAX_DELAY);
+}
+
+static void
+unlock_owner(void)
+{
+  xSemaphoreGiveRecursive(owner_lock);
+}
+
+static void
+notify_reset(int reason)
+{
+  for (picoruby_nimble_client_t *c = clients; c; c = c->next) {
+    if (c->held && c->on_reset) c->on_reset(reason);
+  }
+}
+
+static int
+host_start(void)
+{
   esp_err_t err = nvs_flash_init();
   if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
     nvs_flash_erase();
@@ -294,9 +334,18 @@ picoruby_nimble_start(picoruby_nimble_setup_fn setup)
   ble_hs_cfg.sm_mitm = 0;
   ble_hs_cfg.sm_sc = 0;
 
-  if (setup && setup() != 0) {
-    nimble_port_deinit();
-    return -1;
+  for (picoruby_nimble_client_t *c = clients; c; c = c->next) {
+    if (c->held && c->configure) c->configure();
+  }
+  for (picoruby_nimble_client_t *c = clients; c; c = c->next) {
+    c->set_up = false;
+    if (!c->held) continue;
+    if (c->setup && c->setup() != 0) {
+      ESP_LOGE(TAG, "NimBLE client %s: setup failed", c->name ? c->name : "?");
+      nimble_port_deinit();
+      return -1;
+    }
+    c->set_up = true;
   }
 
   ensure_timers();
@@ -305,23 +354,25 @@ picoruby_nimble_start(picoruby_nimble_setup_fn setup)
   picoruby_nimble_reset_writes();
 
   if (sync_sem == NULL) sync_sem = xSemaphoreCreateBinary();
+  xSemaphoreTake(sync_sem, 0);
   synced = false;
+  started = true;  /* before the host task: on_sync runs on it */
   nimble_port_freertos_init(host_task);
 
   if (xSemaphoreTake(sync_sem, SYNC_TIMEOUT_TICKS) != pdTRUE) {
+    started = false;
     nimble_port_stop();
     nimble_port_deinit();
     return -1;
   }
-
-  started = true;
   return 0;
 }
 
-int
-picoruby_nimble_stop(void)
+static void
+host_stop(void)
 {
-  if (!started) return 0;
+  if (!started) return;
+  notify_reset(PICORUBY_NIMBLE_REASON_STOPPED);
   heartbeat_force_stop();
   ble_gap_adv_stop();
   ble_gap_disc_cancel();
@@ -329,6 +380,106 @@ picoruby_nimble_stop(void)
   nimble_port_deinit();
   synced = false;
   started = false;
+  for (picoruby_nimble_client_t *c = clients; c; c = c->next) c->set_up = false;
+}
+
+static bool
+held_by_other(const picoruby_nimble_client_t *self, bool exclusive_only)
+{
+  for (picoruby_nimble_client_t *c = clients; c; c = c->next) {
+    if (c == self || !c->held) continue;
+    if (!exclusive_only || c->exclusive) return true;
+  }
+  return false;
+}
+
+int
+picoruby_nimble_acquire(picoruby_nimble_client_t *client)
+{
+  if (client == NULL) return -1;
+  lock_owner();
+  if (held_by_other(client, true) || (client->exclusive && held_by_other(client, false))) {
+    unlock_owner();
+    return -2;
+  }
+  bool known = false;
+  picoruby_nimble_client_t **tail = &clients;
+  for (; *tail; tail = &(*tail)->next) {
+    if (*tail == client) known = true;
+  }
+  if (!known) {
+    client->next = NULL;
+    *tail = client;
+  }
+  bool was_held = client->held;
+  client->held = true;
+  int rc = 0;
+  if (!started) {
+    rc = host_start();
+  } else if (client->setup && !client->set_up) {
+    /* Services can only be added to a stopped host */
+    host_stop();
+    rc = host_start();
+  } else if (!was_held) {
+    if (client->configure) client->configure();
+    client->set_up = true;
+    if (synced && client->on_sync) client->on_sync();
+  }
+  if (rc != 0) {
+    client->held = false;
+    /* the others had the host before: bring it back for them */
+    if (!started && held_by_other(client, false)) host_start();
+  }
+  unlock_owner();
+  return rc;
+}
+
+void
+picoruby_nimble_release(picoruby_nimble_client_t *client)
+{
+  if (client == NULL) return;
+  lock_owner();
+  if (client->held) {
+    client->held = false;
+    if (!held_by_other(client, false)) host_stop();
+  }
+  unlock_owner();
+}
+
+bool
+picoruby_nimble_shared(const picoruby_nimble_client_t *self)
+{
+  bool shared;
+  lock_owner();
+  shared = held_by_other(self ? self : &legacy_client, false);
+  unlock_owner();
+  return shared;
+}
+
+bool
+picoruby_nimble_synced(void)
+{
+  return started && synced;
+}
+
+int
+picoruby_nimble_start(picoruby_nimble_setup_fn setup)
+{
+  lock_owner();
+  if (legacy_client.held && started) {
+    unlock_owner();
+    return 0;
+  }
+  legacy_client.setup = setup;
+  int rc = picoruby_nimble_acquire(&legacy_client);
+  unlock_owner();
+  return rc == 0 ? 0 : -1;
+}
+
+int
+picoruby_nimble_stop(void)
+{
+  picoruby_nimble_release(&legacy_client);
   return 0;
 }
 

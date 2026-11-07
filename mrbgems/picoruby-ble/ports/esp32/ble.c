@@ -211,7 +211,10 @@ void
 picoruby_ble_gatts_register_cb(struct ble_gatt_register_ctxt *ctxt, void *arg)
 {
   (void)arg;
-  if (ctxt->op == BLE_GATT_REGISTER_OP_DSC && ctxt->dsc.dsc_def->arg) {
+  /* Other clients of the shared host register services of their own: only
+   * descriptors from dsc_slots carry an attr_map_t as their arg. */
+  if (ctxt->op == BLE_GATT_REGISTER_OP_DSC && ctxt->dsc.dsc_def->arg
+      && ctxt->dsc.dsc_def >= dsc_slots && ctxt->dsc.dsc_def < dsc_slots + MAX_DSC_SLOTS) {
     ((attr_map_t *)ctxt->dsc.dsc_def->arg)->nimble_handle = ctxt->dsc.handle;
   }
 }
@@ -557,10 +560,11 @@ picoruby_ble_gap_event(struct ble_gap_event *event, void *arg)
 int
 BLE_init(const uint8_t *profile_data, int ble_role)
 {
+  /* The host may be shared with other clients (e.g. BLE-MIDI); the BLE
+   * class holds it exclusively, so this fails while they hold it. */
+  if (picoruby_nimble_shared(NULL)) return -1;
   role = (enum BLE_role_t)ble_role;
-  if (picoruby_nimble_started()) {
-    picoruby_nimble_stop();
-  }
+  picoruby_nimble_stop();
   con_handle = 0xffff;
   have_services = false;
   attr_map_count = 0;
