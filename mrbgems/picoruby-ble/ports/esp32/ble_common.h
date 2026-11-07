@@ -21,6 +21,17 @@ uint16_t picoruby_ble_handle_r2n(uint16_t ruby_handle);
 void picoruby_ble_refresh_read_mirrors(void);
 void picoruby_ble_peripheral_rearm_adv(void);
 
+/* The BLE class's side of the shared host (nimble_owner.c) */
+void picoruby_ble_on_sync(void);
+void picoruby_ble_on_reset(int reason);
+/* Stop the BLE class's advertising / scan / connection setup, drop its link */
+void picoruby_ble_teardown(void);
+/* Advertising / scan ended on their own (connected, completed) */
+void picoruby_ble_peripheral_adv_ended(void);
+void picoruby_ble_central_proc_ended(void);
+bool picoruby_ble_central_rescan(void);
+void picoruby_ble_central_teardown(void);
+
 #ifdef __cplusplus
 }
 #endif

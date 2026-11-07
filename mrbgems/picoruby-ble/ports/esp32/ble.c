@@ -5,6 +5,7 @@
 
 #include "../../include/ble.h"
 #include "../../include/ble_peripheral.h"
+#include "../../include/ble_central.h"
 
 #include "host/ble_hs.h"
 #include "host/ble_gap.h"
@@ -382,12 +383,36 @@ parse_att_db(const uint8_t *db, size_t db_len)
   return 0;
 }
 
+/* GAP (0x1800) / GATT (0x1801) services of the profile are left out when
+ * another client of the shared host registers NimBLE's own (BLE-MIDI device):
+ * a database must not have them twice. The device name is then that
+ * client's. */
+static struct ble_gatt_svc_def svc_defs_shared[MAX_SVCS + 1];
+
+static bool
+is_gap_or_gatt(const struct ble_gatt_svc_def *d)
+{
+  if (d->uuid == NULL || d->uuid->type != BLE_UUID_TYPE_16) return false;
+  uint16_t u = BLE_UUID16(d->uuid)->value;
+  return u == 0x1800 || u == 0x1801;
+}
+
 static int
 register_services(void)
 {
   if (!have_services) return 0;
-  int rc = ble_gatts_count_cfg(svc_defs);
-  if (rc == 0) rc = ble_gatts_add_svcs(svc_defs);
+  const struct ble_gatt_svc_def *defs = svc_defs;
+  if (picoruby_nimble_gap_provided()) {
+    int n = 0;
+    for (int i = 0; i < svc_count; i++) {
+      if (!is_gap_or_gatt(&svc_defs[i])) svc_defs_shared[n++] = svc_defs[i];
+    }
+    memset(&svc_defs_shared[n], 0, sizeof(svc_defs_shared[0]));
+    if (n == 0) return 0;
+    defs = svc_defs_shared;
+  }
+  int rc = ble_gatts_count_cfg(defs);
+  if (rc == 0) rc = ble_gatts_add_svcs(defs);
   return rc;
 }
 
@@ -489,6 +514,9 @@ picoruby_ble_gap_event(struct ble_gap_event *event, void *arg)
   (void)arg;
   switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
+      /* the procedure that made it (advertising / connection setup) ended */
+      if (role == BLE_ROLE_CENTRAL) picoruby_ble_central_proc_ended();
+      else picoruby_ble_peripheral_adv_ended();
       if (event->connect.status == 0) {
         con_handle = event->connect.conn_handle;
         if (role == BLE_ROLE_CENTRAL) {
@@ -512,6 +540,7 @@ picoruby_ble_gap_event(struct ble_gap_event *event, void *arg)
       }
       break;
     case BLE_GAP_EVENT_ADV_COMPLETE:
+      picoruby_ble_peripheral_adv_ended();
       if (role == BLE_ROLE_PERIPHERAL || role == BLE_ROLE_BROADCASTER) {
         picoruby_ble_peripheral_rearm_adv();
       }
@@ -538,6 +567,9 @@ picoruby_ble_gap_event(struct ble_gap_event *event, void *arg)
         synth_advertising_report(&event->disc);
       }
       break;
+    case BLE_GAP_EVENT_DISC_COMPLETE:
+      picoruby_ble_central_proc_ended();
+      break;
     case BLE_GAP_EVENT_NOTIFY_RX: {
       if (role != BLE_ROLE_CENTRAL) break;
       uint16_t vlen = OS_MBUF_PKTLEN(event->notify_rx.om);
@@ -557,14 +589,48 @@ picoruby_ble_gap_event(struct ble_gap_event *event, void *arg)
   return 0;
 }
 
+/* --- the BLE class's side of the shared host (nimble_owner.h) --- */
+
+void
+picoruby_ble_on_sync(void)
+{
+  picoruby_ble_peripheral_rearm_adv();
+  picoruby_ble_central_rescan();
+}
+
+/* Another client restarted the host (or the controller reset): the link is
+ * gone; tell the script like a disconnection */
+void
+picoruby_ble_on_reset(int reason)
+{
+  (void)reason;
+  uint16_t h = con_handle;
+  con_handle = 0xffff;
+  if (h != 0xffff && (role == BLE_ROLE_PERIPHERAL || role == BLE_ROLE_CENTRAL)) {
+    synth_disconnection_complete(h, 0x16);   /* terminated by the local host */
+  }
+}
+
+void
+picoruby_ble_teardown(void)
+{
+  if (picoruby_nimble_started()) {
+    BLE_peripheral_stop_advertise();
+    picoruby_ble_central_teardown();
+    if (con_handle != 0xffff) ble_gap_terminate(con_handle, BLE_ERR_REM_USER_CONN_TERM);
+  }
+  con_handle = 0xffff;
+  role = BLE_ROLE_NONE;
+}
+
 int
 BLE_init(const uint8_t *profile_data, int ble_role)
 {
-  /* The host may be shared with other clients (e.g. BLE-MIDI); the BLE
-   * class holds it exclusively, so this fails while they hold it. */
-  if (picoruby_nimble_shared(NULL)) return -1;
+  /* The host is shared with other clients (e.g. BLE-MIDI). picoruby_nimble_
+   * start() below drops what the previous BLE.new left and restarts the host
+   * when GATT services come or go. */
+  picoruby_ble_teardown();
   role = (enum BLE_role_t)ble_role;
-  picoruby_nimble_stop();
   con_handle = 0xffff;
   have_services = false;
   attr_map_count = 0;
@@ -582,7 +648,9 @@ BLE_init(const uint8_t *profile_data, int ble_role)
     if (parse_att_db(owned_profile_data, len) < 0) return -1;
   }
 
-  return picoruby_nimble_start(register_services);
+  int rc = picoruby_nimble_start(have_services ? register_services : NULL);
+  role = (enum BLE_role_t)ble_role;   /* (the start's teardown cleared it) */
+  return rc;
 }
 
 void
@@ -602,7 +670,7 @@ BLE_hci_power_control(uint8_t power_mode)
         break;
       case BLE_ROLE_CENTRAL:
       case BLE_ROLE_OBSERVER:
-        ble_gap_disc_cancel();
+        BLE_central_stop_scan();
         break;
       default:
         break;

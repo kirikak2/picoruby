@@ -56,7 +56,18 @@ static bool started = false;
 
 /* Clients in the order they first acquired; the BLE class's is legacy_client */
 static picoruby_nimble_client_t *clients = NULL;
-static picoruby_nimble_client_t legacy_client = { .name = "BLE", .exclusive = true };
+static picoruby_nimble_client_t legacy_client = {
+  .name = "BLE",
+  .priority = 1,                      /* the running script's */
+  .on_sync = picoruby_ble_on_sync,
+  .on_reset = picoruby_ble_on_reset,
+};
+/* The BLE class's GATT services are in the host's database */
+static bool legacy_gatt = false;
+
+/* Holders of the procedures run one at a time (picoruby_nimble_claim) */
+static picoruby_nimble_client_t *proc_holder[PICORUBY_NIMBLE_PROC_COUNT];
+static portMUX_TYPE proc_mux = portMUX_INITIALIZER_UNLOCKED;
 static volatile bool synced = false;
 static uint8_t own_addr_type = BLE_OWN_ADDR_PUBLIC;
 static SemaphoreHandle_t sync_sem = NULL;
@@ -248,10 +259,13 @@ on_sync(void)
   }
 }
 
+static void clear_procs(void);
+
 static void
 on_reset(int reason)
 {
   synced = false;
+  clear_procs();          /* the controller dropped advertising and scans */
   for (picoruby_nimble_client_t *c = clients; c; c = c->next) {
     if (c->held && c->on_reset) c->on_reset(reason);
   }
@@ -349,9 +363,12 @@ host_start(void)
   }
 
   ensure_timers();
-  picoruby_nimble_attach_vm(NULL);
-  picoruby_nimble_reset_events();
-  picoruby_nimble_reset_writes();
+  if (!legacy_client.held) {
+    /* (a restart for another client keeps the BLE class's VM and queues) */
+    picoruby_nimble_attach_vm(NULL);
+    picoruby_nimble_reset_events();
+    picoruby_nimble_reset_writes();
+  }
 
   if (sync_sem == NULL) sync_sem = xSemaphoreCreateBinary();
   xSemaphoreTake(sync_sem, 0);
@@ -369,11 +386,21 @@ host_start(void)
 }
 
 static void
+clear_procs(void)
+{
+  taskENTER_CRITICAL(&proc_mux);
+  for (int i = 0; i < PICORUBY_NIMBLE_PROC_COUNT; i++) proc_holder[i] = NULL;
+  for (picoruby_nimble_client_t *c = clients; c; c = c->next) c->waiting = 0;
+  taskEXIT_CRITICAL(&proc_mux);
+}
+
+static void
 host_stop(void)
 {
   if (!started) return;
   notify_reset(PICORUBY_NIMBLE_REASON_STOPPED);
-  heartbeat_force_stop();
+  clear_procs();
+  if (!legacy_client.held) heartbeat_force_stop();
   ble_gap_adv_stop();
   ble_gap_disc_cancel();
   nimble_port_stop();
@@ -440,10 +467,99 @@ picoruby_nimble_release(picoruby_nimble_client_t *client)
   if (client == NULL) return;
   lock_owner();
   if (client->held) {
+    for (int i = 0; i < PICORUBY_NIMBLE_PROC_COUNT; i++) picoruby_nimble_unclaim(client, i);
     client->held = false;
+    client->waiting = 0;
     if (!held_by_other(client, false)) host_stop();
   }
   unlock_owner();
+}
+
+/* --- procedures run one at a time ---------------------------------- */
+
+static picoruby_nimble_client_t *
+client_or_legacy(picoruby_nimble_client_t *c)
+{
+  return c ? c : &legacy_client;
+}
+
+bool
+picoruby_nimble_claim(picoruby_nimble_client_t *client, int proc)
+{
+  if (proc < 0 || proc >= PICORUBY_NIMBLE_PROC_COUNT) return false;
+  client = client_or_legacy(client);
+  picoruby_nimble_client_t *victim = NULL;
+  bool ok;
+  taskENTER_CRITICAL(&proc_mux);
+  picoruby_nimble_client_t *h = proc_holder[proc];
+  if (h == NULL || h == client) {
+    ok = true;
+  } else if (client->priority > h->priority) {
+    ok = true;
+    victim = h;
+    h->waiting |= (uint8_t)(1u << proc);
+  } else {
+    ok = false;
+    client->waiting |= (uint8_t)(1u << proc);
+  }
+  if (ok) {
+    proc_holder[proc] = client;
+    client->waiting &= (uint8_t)~(1u << proc);
+  }
+  taskEXIT_CRITICAL(&proc_mux);
+  if (victim) {
+    ESP_LOGI(TAG, "%s takes %s from %s", client->name ? client->name : "?",
+             proc == PICORUBY_NIMBLE_PROC_ADV ? "advertising" : "scanning",
+             victim->name ? victim->name : "?");
+    if (victim->yield) victim->yield(proc);
+  }
+  return ok;
+}
+
+void
+picoruby_nimble_unclaim(picoruby_nimble_client_t *client, int proc)
+{
+  if (proc < 0 || proc >= PICORUBY_NIMBLE_PROC_COUNT) return;
+  client = client_or_legacy(client);
+  enum { MAX_WAKE = 8 };
+  picoruby_nimble_client_t *wake[MAX_WAKE];
+  int n = 0;
+  taskENTER_CRITICAL(&proc_mux);
+  if (proc_holder[proc] != client) {
+    taskEXIT_CRITICAL(&proc_mux);
+    return;
+  }
+  proc_holder[proc] = NULL;
+  for (picoruby_nimble_client_t *c = clients; c && n < MAX_WAKE; c = c->next) {
+    if (c != client && c->held && (c->waiting & (1u << proc))) {
+      c->waiting &= (uint8_t)~(1u << proc);
+      wake[n++] = c;
+    }
+  }
+  taskEXIT_CRITICAL(&proc_mux);
+  for (int i = 0; i < n; i++) {
+    if (wake[i]->proc_free) wake[i]->proc_free(proc);
+  }
+}
+
+bool
+picoruby_nimble_holds(const picoruby_nimble_client_t *client, int proc)
+{
+  if (proc < 0 || proc >= PICORUBY_NIMBLE_PROC_COUNT) return false;
+  const picoruby_nimble_client_t *c = client ? client : &legacy_client;
+  taskENTER_CRITICAL(&proc_mux);
+  bool held = (proc_holder[proc] == c);
+  taskEXIT_CRITICAL(&proc_mux);
+  return held;
+}
+
+bool
+picoruby_nimble_gap_provided(void)
+{
+  for (picoruby_nimble_client_t *c = clients; c; c = c->next) {
+    if (c->held && c->provides_gap) return true;
+  }
+  return false;
 }
 
 bool
@@ -462,24 +578,62 @@ picoruby_nimble_synced(void)
   return started && synced;
 }
 
+/* The BLE class (BLE.new): `setup` registers its GATT services, NULL when
+ * it has none. Its queues start empty; the VM attaches after. */
 int
 picoruby_nimble_start(picoruby_nimble_setup_fn setup)
 {
   lock_owner();
-  if (legacy_client.held && started) {
-    unlock_owner();
-    return 0;
-  }
+  picoruby_ble_teardown();          /* the previous BLE.new's procedures and link */
+  heartbeat_force_stop();
+  picoruby_nimble_attach_vm(NULL);
+  picoruby_nimble_reset_events();
+  picoruby_nimble_reset_writes();
+
+  bool restart = legacy_client.held && started && (setup != NULL || legacy_gatt);
   legacy_client.setup = setup;
-  int rc = picoruby_nimble_acquire(&legacy_client);
+  int rc;
+  if (restart) {
+    /* services can only change on a stopped host */
+    host_stop();
+    rc = host_start();
+    if (rc != 0) {
+      legacy_client.held = false;
+      if (held_by_other(&legacy_client, false)) host_start();   /* back for the others */
+    }
+  } else if (legacy_client.held && started) {
+    rc = 0;
+  } else {
+    if (legacy_client.held) legacy_client.held = false;   /* host went down under it */
+    rc = picoruby_nimble_acquire(&legacy_client);
+  }
+  legacy_gatt = (rc == 0 && setup != NULL);
   unlock_owner();
   return rc == 0 ? 0 : -1;
 }
 
+/* The BLE class lets go (script end; its VM may be gone already) */
 int
 picoruby_nimble_stop(void)
 {
-  picoruby_nimble_release(&legacy_client);
+  lock_owner();
+  if (legacy_client.held) {
+    picoruby_ble_teardown();
+    heartbeat_force_stop();
+    picoruby_nimble_attach_vm(NULL);
+    picoruby_nimble_reset_events();
+    picoruby_nimble_reset_writes();
+    bool drop_services = legacy_gatt && held_by_other(&legacy_client, false);
+    legacy_client.setup = NULL;
+    legacy_gatt = false;
+    picoruby_nimble_release(&legacy_client);
+    if (drop_services && started) {
+      /* take its services out of the database the others go on with */
+      host_stop();
+      host_start();
+    }
+  }
+  unlock_owner();
   return 0;
 }
 

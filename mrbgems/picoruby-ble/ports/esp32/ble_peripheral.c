@@ -22,9 +22,13 @@ static uint8_t adv_data_len = 0;
 static bool adv_connectable = false;
 static bool adv_wanted = false;
 
+/* Advertising is claimed from the shared host (nimble_owner.h); the BLE
+ * class has priority, so a BLE-MIDI device's advertising pauses for it. */
 static int
 adv_start(void)
 {
+  if (!picoruby_nimble_claim(NULL, PICORUBY_NIMBLE_PROC_ADV)) return BLE_HS_EBUSY;
+  if (ble_gap_adv_active()) ble_gap_adv_stop();   /* ours, restarted with new data */
   struct ble_gap_adv_params params;
   memset(&params, 0, sizeof(params));
   params.conn_mode = adv_connectable ? BLE_GAP_CONN_MODE_UND : BLE_GAP_CONN_MODE_NON;
@@ -36,6 +40,7 @@ adv_start(void)
     rc = ble_gap_adv_start(picoruby_nimble_own_addr_type(), NULL, BLE_HS_FOREVER,
                            &params, picoruby_ble_gap_event, NULL);
   }
+  if (rc != 0) picoruby_nimble_unclaim(NULL, PICORUBY_NIMBLE_PROC_ADV);
   return rc;
 }
 
@@ -47,7 +52,6 @@ BLE_peripheral_advertise(uint8_t *adv_data, uint8_t adv_data_len_in, bool connec
   adv_data_len = adv_data_len_in;
   adv_connectable = connectable;
   adv_wanted = true;
-  ble_gap_adv_stop();
   adv_start();
 }
 
@@ -55,7 +59,17 @@ void
 BLE_peripheral_stop_advertise(void)
 {
   adv_wanted = false;
-  ble_gap_adv_stop();
+  if (picoruby_nimble_holds(NULL, PICORUBY_NIMBLE_PROC_ADV)) {
+    ble_gap_adv_stop();
+    picoruby_nimble_unclaim(NULL, PICORUBY_NIMBLE_PROC_ADV);
+  }
+}
+
+/* NimBLE ended the advertising (a central connected, or it completed) */
+void
+picoruby_ble_peripheral_adv_ended(void)
+{
+  picoruby_nimble_unclaim(NULL, PICORUBY_NIMBLE_PROC_ADV);
 }
 
 void
